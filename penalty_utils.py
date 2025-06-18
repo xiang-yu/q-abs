@@ -2,17 +2,20 @@ import findiff
 from findiff import Diff
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+import matplotlib.ticker as mticker
+
 from scipy import sparse
 from scipy.sparse import identity, kron, diags
 import numpy as np
 # from helpers import *
-from scipy.integrate import RK45
+from scipy.integrate import RK45, LSODA, BDF, RK23
 
 plt.rcParams.update({
     "text.usetex": True,
-    "font.family": "mathptmx"
+    "font.family": "mathptmx",
+    "text.latex.preamble": r"\usepackage{amsmath}",
+    "font.size": 14
 })
-
 
 ''' -------------------------------------------------- '''
 
@@ -98,7 +101,7 @@ def wave_operator2d(num_grid_points, speed_of_sound=(1,1), dx=1):
     N = num_grid_points
     if isinstance(speed_of_sound, float):
         speed_of_sound = (speed_of_sound, speed_of_sound)
-    laplace = speed_of_sound[0]*Diff(axis=0, grid=dx, periodic=True)**2 + speed_of_sound[1]*Diff(axis=1, grid=dx, periodic=True)**2
+    laplace = speed_of_sound[0]*Diff(axis=0, grid=dx, periodic=True, acc=4)**2 + speed_of_sound[1]*Diff(axis=1, grid=dx, periodic=True, acc=4)**2
     lapmat = laplace.matrix((N,N))
     Wave = sparse.block_array([[None, identity(N*N)], [lapmat, None]])
 
@@ -184,7 +187,7 @@ def wall_deriv_projection2d(num_grid_points, X, Y):
 #         return wrap_ipic_rot_deriv
 ''' -------------------------------------------------- '''
 def ipic_operator(operator, projc, lam):
-    U = projc.apply_exp_fn(lam)
+    U = projc.apply_exp_fn(lam)  # this is a f(t)
     def wrap_ipic(t):
         # rotation matrix
         return U(t) @ operator @ U(-t)

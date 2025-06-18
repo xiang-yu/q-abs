@@ -1,5 +1,6 @@
 from penalty_utils import *
 from penaltyDE_2d import *
+import pandas as pd
 
 import argparse
 
@@ -9,7 +10,8 @@ parser.add_argument("-N", "--num_grid_points", type=int, default=5)
 parser.add_argument("-dt", "--timestep", type=float, default=0.01)
 parser.add_argument("-t", "--time", type=float, default=1.)
 parser.add_argument("-e", "--eqtype", type=str, default='heat')
-parser.add_argument("-b", "--bctype", type=str, default='zero')
+parser.add_argument("-b", "--bctype", type=str, default='wall')
+parser.add_argument("-v", "--bcval", type=str, default='zero')
 parser.add_argument("-s", "--simtype", type=str, default='errors')
 
 args = parser.parse_args()
@@ -21,9 +23,10 @@ LAM = 10**(args.lam)
 T = args.time
 eqtype = args.eqtype.lower()
 bctype = args.bctype.lower()
+bcval = args.bcval.lower()
 simtype = args.simtype.lower()
 
-plot_errors_heat    = False
+plot_errors_heat    = True
 do_non_zero_bc_heat = False
 wave_stuff_zero     = True
 do_source = True
@@ -31,24 +34,25 @@ do_source = True
 
 if simtype == 'errors' and eqtype == 'heat':
     plot_errors_heat = True
-if bctype == 'nonzero' and eqtype == 'heat':
+if bcval == 'nonzero' and eqtype == 'heat':
     do_non_zero_bc_heat = True
-if bctype == 'zero' and eqtype == 'wave':
-    wave_stuff_zero = True
 
-do_non_zero_bc_heat = False
-# plot_errors_heat = False
-
-print("Running time evolution for {eqt} equation with T={TT} and lambda={lala}.".format(eqt=eqtype, TT=T, lala=LAM))
+if simtype == 'errors' and eqtype == 'wave':
+    plot_errors_wave = True
 
 
-save_figs = False
+
+
+print("Running time evolution for {eqt} equation with T={TT} and lambda={lala:E}.".format(eqt=eqtype, TT=T, lala=LAM))
+
+
+save_figs = True
 
 
 ''' heat start '''
 if eqtype.lower() == 'heat':
     kappa = 4.
-    HeatDE = PenaltyDE_2d(N=N, dt=dt, T=T, lam=LAM, eqtype=eqtype, coeff=kappa, bctype='wall_deriv')
+    HeatDE = PenaltyDE_2d(N=N, dt=dt, T=T, lam=LAM, eqtype=eqtype, coeff=kappa, bctype=bctype)
     HeatDE.construct_initial_state_centered(width=1/(3/2*HeatDE.N), height=1)
 
 
@@ -70,9 +74,8 @@ if eqtype.lower() == 'heat':
     ''' -------------------------------------------------- '''
 
     if plot_errors_heat:
-        lambdas = np.logspace(1, 10, 6)
+        lambdas = np.logspace(2, 6, 4)
         errors = np.zeros(len(lambdas))
-        # full_RHS = pt_RHS.flatten() + HeatDE.L_at_RHS.flatten()
 
         # use left-right-back-boundary for error computation if it's the nonzero boundary condition
         wall_lrb = HeatDE.wall_bdry_projection2d(kind='lrb')
@@ -103,13 +106,36 @@ if eqtype.lower() == 'heat':
         print('Errors', errors)
         print('Error bounds', err_bounds)
 
+        '''
+        erro = np.zeros((bndry_vals.shape[0],len(lambdas)))
+        for i_l, lam in enumerate(lambdas):
+            HeatDE.lam = lam  # reset to current lambda
+            vals, bndry_vals = HeatDE.time_evolution()
+            if HeatDE.projc.kind == 'value':
+                erro[:,i_l] = np.linalg.norm(np.real(bndry_vals[:,:]),axis=1)
+            elif HeatDE.projc.kind == 'deriv':
+                pass
+        print('errs via time')
+        fig, ax = plt.subplots()
+        for i_l in range(len(lambdas)):
+            ax.loglog(erro[:,i_l], label=str(lambdas[i_l]))
+            #print(erro[:,i_l])
+        fig.legend()
+        # plt.show()
+        fig.savefig('stuff.png')
+        np.savetxt('err.txt', erro)
+        '''
+
         plt.loglog(lambdas, errors, 'cd-', label=r'$\|\mathbf{u}\|_{S_c}$')
         plt.loglog(lambdas, err_bounds, 'r-.', label=r'upper bound')
+        data = pd.DataFrame({'lambdas': lambdas, 'errors': errors, 'bounds': err_bounds,
+            'N':N, 'dt':dt, 'bctype':bctype})
+        data.to_csv('errors_t{TT}_{ET}_N{NN}_dt{DD}_type{simt}_btype{bct}_coeff{cc}_bcval{bcv}.csv'.format(TT=T, ET=eqtype, simt=simtype, NN=N, DD=dt, bct=bctype,cc=kappa,bcv=bcval))
         plt.legend()
         plt.xlabel(r'$\lambda$')
         plt.ylabel('error')
         if save_figs:
-            plt.savefig('errors_t{TT}_{ET}_N{NN}_dt{DD}_type{simt}_btype{bct}.pdf'.format(TT=T, ET=eqtype, simt=simtype, NN=N, DD=dt, bct=bctype))
+            plt.savefig('errors_t{TT}_{ET}_N{NN}_dt{DD}_type{simt}_btype{bct}_coeff{cc}_bcval{bcv}.pdf'.format(TT=T, ET=eqtype, simt=simtype, NN=N, DD=dt, bct=bctype,cc=kappa,bcv=bcval))
         else:
             plt.show()
 
@@ -123,28 +149,32 @@ if eqtype.lower() == 'heat':
         minval, maxval = np.min(np.real(vals.flatten())), np.real(np.max(vals.flatten()))
         minb, maxb = np.min(np.real(bndry_vals.flatten())), np.max(np.real(bndry_vals.flatten()))
         # plot initial and final results
-        fig, ax = plt.subplots(nrows=2, ncols=2, sharex=True, sharey=True, layout='constrained')
+        fig, ax = plt.subplots(nrows=2, ncols=2, sharex=True, sharey=True, layout='constrained', figsize=(12,12))
         cax0 = ax[0,0].imshow(np.real(vals[0,:]), cmap='cividis', vmin=minval, vmax=maxval)
-        cax1 = ax[1,0].imshow(np.real(bndry_vals[0,:]), cmap='plasma', vmin=minb, vmax=maxb)
+        cax1 = ax[1,0].imshow(np.real(bndry_vals[0,:]), cmap='viridis', vmin=minb, vmax=maxb)
         cax0 = ax[0,1].imshow(np.real(vals[-1,:]), cmap='cividis', vmin=minval, vmax=maxval)
-        cax1 = ax[1,1].imshow(np.real(bndry_vals[-1,:]), cmap='plasma', vmin=minb, vmax=maxb)
+        cax1 = ax[1,1].imshow(np.real(bndry_vals[-1,:]), cmap='viridis', vmin=minb, vmax=maxb)
         fig.colorbar(cax0, ax=[ax[0,0], ax[0,1]], location='bottom', shrink=.4)
         fig.colorbar(cax1, ax=[ax[1,0], ax[1,1]], location='bottom', shrink=.4)
-        fig.suptitle(r'Heat equation with nonzero boundary and $\lambda=10^{LL}$'.format(LL=args.lam))
+        fig.suptitle(r'\bfseries Heat equation with nonzero boundary and $\lambda=10^{LL}$'.format(LL=args.lam))
         ax[0,0].set_title(r'Solution at $T=0$')
         ax[1,0].set_title(r'Boundary errors at $T=0$')
         ax[0,1].set_title(r'Solution at $T={TT:.1f}$'.format(TT=T))
         ax[1,1].set_title(r'Boundary errors at $T={TT:.1f}$'.format(TT=T))
+        data = pd.DataFrame({'lambda': HeatDE.lam, 'vals':vals.flatten(), 'bvals':bndry_vals.flatten(),
+            'N':N, 'dt':dt, 'bctype':bctype})
+        data.to_csv('Heat_{bqt}-boundary_lambda{LL}_{DD}_{NN}_kap{cc}_bcval{bcv}.csv'.format(bqt=HeatDE.bctype,
+                LL=HeatDE.lam,DD=HeatDE.dt,NN=HeatDE.N,cc=kappa,bcv=bcval))
         if save_figs:
-            fig.savefig('Heat_{bqt}-boundary_lambda{LL}_{DD}_{NN}.pdf'.format(bqt=HeatDE.bctype,
-                LL=HeatDE.lam,DD=HeatDE.dt,NN=HeatDE.N))
+            fig.savefig('Heat_{bqt}-boundary_lambda{LL}_{DD}_{NN}_{cc}_bcval{bcv}.pdf'.format(bqt=HeatDE.bctype,
+                LL=HeatDE.lam,DD=HeatDE.dt,NN=HeatDE.N,cc=kappa,bcv=bcval))
         else:
             plt.show()
 
 
     ''' -------------------------------------------------- '''
-    plot_evolution = True
-    plot_bdry_evolution = True
+    plot_evolution = False
+    plot_bdry_evolution = False
 
 
 
@@ -164,7 +194,8 @@ if eqtype.lower() == 'heat':
 
 ''' wave start '''
 if eqtype == 'wave':
-    c_squared = (4., 4.)
+    c_squared = (1., 1.)
+    print('cfl is ', np.max(c_squared)*dt*N)
     bctype = 'circle'
     kwargs = {'kind': 'lrtb'}
     # kwargs = {'kind': 'lrtb'}
@@ -181,7 +212,7 @@ if eqtype == 'wave':
     # plt.savefig('eigvals.pdf')
     # plt.show()
 
-    WaveDE.construct_initial_state_slit_wave()
+    WaveDE.construct_initial_state_wave()
 
     '''
     wave_projector2d = sparse.block_array([[wall_proj, None], [None, wall_proj]])
@@ -207,7 +238,7 @@ if eqtype == 'wave':
 
     plot_errors_wave = True
     if plot_errors_wave:
-        lambdas = np.logspace(3, 10, 6)
+        lambdas = np.logspace(2, 6, 4)
         errors = np.zeros(len(lambdas))
 
         # This is hard-coded here, needs to be changed if different boundary condition picked
@@ -218,7 +249,8 @@ if eqtype == 'wave':
         for i_l, lam in enumerate(lambdas):
             WaveDE.lam = lam  # reset to current lambda
             vals, bndry_vals = WaveDE.time_evolution()
-            errors[i_l] = np.linalg.norm(wave_err_projc.dot(bndry_vals[-1,:].T).T)
+            # do_plot_evolution_wave(vals, WaveDE.dt)
+            errors[i_l] = np.linalg.norm(wave_err_projc.dot(np.reshape(bndry_vals[-1,:], (-1,2*WaveDE.N**2)).T).T)
             # After errors are computed we can add the boundary values to the vals array
             # but we do not need to do that here if we are interested only in the errors
 
@@ -234,6 +266,10 @@ if eqtype == 'wave':
         print('Errors', errors)
         print('Error bounds', err_bounds)
 
+
+        data = pd.DataFrame({'lambdas': lambdas, 'errors': errors, 'bounds': err_bounds,
+            'N':N, 'dt':dt, 'bctype':bctype})
+        data.to_csv('wave_errors_t{TT}_N{NN}_dt{DD}_type{simt}_btype{bct}.csv'.format(TT=T, simt=simtype, NN=N, DD=dt, bct=bctype))
         plt.loglog(lambdas, errors, 'cd-', label=r'$\|\mathbf{u}\|_{S_c}$')
         plt.loglog(lambdas, err_bounds, 'r-.', label=r'upper bound')
         plt.legend()
@@ -244,47 +280,52 @@ if eqtype == 'wave':
         else:
             plt.show()
 
-        exit()
+
+
+    do_wave_figure = True
+    if do_wave_figure:
+
         WaveDE.lam = LAM
         vals, bndry_vals = WaveDE.time_evolution()
+        data = pd.DataFrame({'lambda': WaveDE.lam, 'vals':vals.flatten(), 'bvals':bndry_vals.flatten(),
+            'N':N, 'dt':dt, 'bctype':bctype})
+        data.to_csv('Wave_{bqt}-boundary_lambda{LL}_{DD}_{NN}.csv'.format(bqt=WaveDE.bctype,
+                LL=WaveDE.lam,DD=WaveDE.dt,NN=WaveDE.N))
+
         #  time_evolution(operator=L, projc=projc, lam=lam,
         # plt.show()
         # plot final
-        bndry_vals = bndry_vals.reshape((-1,WaveDE.N,WaveDE.N))
+        bndry_vals = bndry_vals.reshape((-1,2,WaveDE.N,WaveDE.N))
         # min and max vals for colorbar
-        minval, maxval = np.min(np.real(vals.flatten())), np.real(np.max(vals.flatten()))
+        minu, maxu = np.min(np.real(vals[:,0,...].flatten())), np.real(np.max(vals[:,0,...].flatten()))
+        minw, maxw = np.min(np.real(vals[:,1,...].flatten())), np.real(np.max(vals[:,1,...].flatten()))
         minb, maxb = np.min(np.real(bndry_vals.flatten())), np.max(np.real(bndry_vals.flatten()))
+
         # plot initial and final results
-        fig, ax = plt.subplots(nrows=2, ncols=2, sharex=True, sharey=True, layout='constrained')
-        cax0 = ax[0,0].imshow(np.real(vals[0,:]), cmap='cividis', vmin=minval, vmax=maxval)
-        cax1 = ax[1,0].imshow(np.real(bndry_vals[0,:]), cmap='plasma', vmin=minb, vmax=maxb)
-        cax0 = ax[0,1].imshow(np.real(vals[-1,:]), cmap='cividis', vmin=minval, vmax=maxval)
-        cax1 = ax[1,1].imshow(np.real(bndry_vals[-1,:]), cmap='plasma', vmin=minb, vmax=maxb)
+
+        # fig, ax = plt.subplots(nrows=3, ncols=2, layout='constrained')
+        fig, ax = plt.subplots(nrows=2, ncols=2, layout='constrained', figsize=(12,12))
+        # layout: u-0    u-T
+        #         w-0    w-T
+        # deleted #       err-0  err-T
+        cax0 = ax[0,0].imshow(np.real(vals[0,0,:]), cmap='cividis', vmin=minu, vmax=maxu)
+        cax0 = ax[0,1].imshow(np.real(vals[-1,0,:]), cmap='cividis', vmin=minu, vmax=maxu)
+        cax1 = ax[1,0].imshow(np.real(vals[0,1,:]), cmap='cividis', vmin=minw, vmax=maxw)
+        cax1 = ax[1,1].imshow(np.real(vals[-1,1,:]), cmap='cividis', vmin=minw, vmax=maxw)
+        # ax[2,0].semilogy(np.linalg.norm(np.real(bndry_vals[:,0,:].reshape((-1,WaveDE.N**2)) ),axis=1), 'c-')
+        # ax[2,1].semilogy(np.linalg.norm(np.real(bndry_vals[:,1,:].reshape((-1,WaveDE.N**2))),axis=1), 'g-')
         fig.colorbar(cax0, ax=[ax[0,0], ax[0,1]], location='bottom', shrink=.4)
         fig.colorbar(cax1, ax=[ax[1,0], ax[1,1]], location='bottom', shrink=.4)
-        fig.suptitle(r'Heat equation with nonzero boundary and $\lambda=10^{LL}$'.format(LL=args.lam))
-        ax[0,0].set_title(r'Solution at $T=0$')
-        ax[1,0].set_title(r'Boundary errors at $T=0$')
-        ax[0,1].set_title(r'Solution at $T={TT:.1f}$'.format(TT=T))
-        ax[1,1].set_title(r'Boundary errors at $T={TT:.1f}$'.format(TT=T))
+        # fig.colorbar(cax2, ax=[ax[2,0], ax[2,1]], location='bottom', shrink=.4)
+        fig.suptitle(r'Wave equation with zero boundary and $\lambda=10^{LL}$'.format(LL=args.lam))
+        ax[0,0].set_title(r'$\mathbf{u}(0)$')
+        ax[0,1].set_title(r'$\mathbf{u}$'+r'$(T={TT:.1f})$'.format(TT=T))
+        ax[1,0].set_title(r'$\mathbf{w}(0)$')
+        ax[1,1].set_title(r'$\mathbf{u}$' +r'$(T={TT:.1f})$'.format(TT=T))
+        # ax[2,0].set_title(r'$\|\mathbf{u}\|_{S_c}(t)$')
+        # ax[2,1].set_title(r'$\|\mathbf{w}\|_{S_c}(t)$')
         if save_figs:
-            fig.savefig('Heat_{bqt}-boundary_lambda{LL}_{DD}_{NN}.pdf'.format(bqt=HeatDE.bctype,
-                LL=HeatDE.lam,DD=HeatDE.dt,NN=HeatDE.N))
+            fig.savefig('Wave_{bqt}-boundary_lambda{LL}_{DD}_{NN}.pdf'.format(bqt=WaveDE.bctype,
+                LL=WaveDE.lam,DD=WaveDE.dt,NN=WaveDE.N))
         else:
             plt.show()
-
-'''
-    if WaveDE.projc.kind.lower() == 'value':
-        wave_errs_max = np.linalg.norm(np.real(wave_bndry), axis=1, ord=np.inf)
-        wave_errs_2 = np.linalg.norm(np.real(wave_bndry), axis=1, ord=2)
-        plt.semilogy(wave_errs_max, label='max err')
-        plt.semilogy(wave_errs_2, label='l2 err')
-        plt.semilogy(np.ones(wave_bndry.shape[0])*bound, label='bound')
-        plt.legend(loc='right')
-        plt.title(r'$\lambda$={ll:E}'.format(ll=WaveDE.lam))
-        if save_figs:
-            plt.savefig('...')
-        else:
-            plt.show()
-    '''
-''' wave end '''

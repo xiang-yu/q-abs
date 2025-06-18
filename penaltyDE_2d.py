@@ -1,4 +1,5 @@
 from penalty_utils import *
+import copy
 
 
 class PenaltyProj:
@@ -29,6 +30,8 @@ class PenaltyDE_2d:
         self.x, self.y, self.dx = self._create_xy()
 
         self.eqtype = eqtype
+        self.bctype = bctype
+        self.coeff = coeff
         self._set_system_operator(coeff=coeff)
 
         self.x0 = None
@@ -145,7 +148,7 @@ class PenaltyDE_2d:
         assert self.eqtype.lower() == 'heat'
         gaussian = height * np.exp( -1.*(np.square(self.x-1/2)+np.square(self.y-1/2)) / width )
         self.x0 = np.array(gaussian, dtype=complex).flatten()
-        outpoints = circle_points(self.x, self.y, radius=0.4, kind='outside')
+        # outpoints = circle_points(self.x, self.y, radius=0.4, kind='outside')
         # Make sure that BC is satisfied -- given homogenization, this is always zero for Dirichlet
         if self.projc.kind == 'value':
             self.x0[self.bndry_points] = 0.
@@ -153,11 +156,14 @@ class PenaltyDE_2d:
             print("Warning: Depending on the projection used the initial condition might have to be adapted.")
             self.x0[self.bndry_points] = 0.
     ''' -------------------------------------------------- '''
-    def construct_initial_state_slit_wave(self):
+    def construct_initial_state_wave(self):
         ''' construct initial state, slit geometry '''
         assert self.eqtype.lower() == 'wave'
-        v0 = np.cos(self.x)*(np.isclose(self.y, 0.5, atol=0.1))*(self.x>.2)*(self.x<.8)
-        w0 = np.ones(self.x.shape)*np.isclose(self.x,1/2,atol=2/self.N)*np.isclose(self.y,1/2,atol=2/self.N)
+        outpoints = circle_points(self.x, self.y, radius=0.1, kind='outside')
+        v0 = 0.001*(np.sin(self.x)*np.sin(self.y)).flatten()
+        w0 = 0.01 *(np.cos(self.x)*np.cos(self.y)).flatten()
+        v0[outpoints] = 0
+        w0[outpoints] = 0
         full_x0 = np.zeros((2*self.N**2,), dtype=complex)
         full_x0[:self.N**2] = v0.flatten()
         full_x0[self.N**2:] = w0.flatten()
@@ -165,7 +171,8 @@ class PenaltyDE_2d:
         # Make sure that BC is satisfied
         self.x0[self.bndry_points] = 0.
     ''' -------------------------------------------------- '''
-    def time_evolution(self,  ode_method=RK45):
+    # def time_evolution(self,  ode_method=RK45):
+    def time_evolution(self,  ode_method=RK23):
         '''
             Function that simulates the time evolution using penalty constraints of the
             system operator defined in the class with respect to the initial conditions x0
@@ -176,40 +183,54 @@ class PenaltyDE_2d:
                                             should be close to zero everywhere ideally)
         '''
         if self.eqtype.lower() == 'wave':
-            val_array, soln_bndry = self._time_evolution_wave(ode_method=RK45)
+            val_array, soln_bndry = self._time_evolution_wave(ode_method=ode_method)
             return val_array, soln_bndry
         else:
             ipic = True
             if ipic:
                 RHS = lambda t: self.projc.apply_exp_fn(self.lam)(t) @ ( self.RHS + self.L_at_bcvals )
                 sol = ode_method(fun=ode_fn(operator=ipic_operator(self.operator, self.projc, self.lam),
-                                            RHS=RHS), t0=0, y0=self.x0, t_bound=self.T, first_step=self.dt)
+                                            RHS=RHS), t0=0, y0=self.x0, t_bound=self.T,
+                                            first_step=self.dt,
+                                            max_step=self.dt)
             elif not ipic:
-                raise Exception("This is deprecated.")
-                sol = ode_method(fun=ode_fn(lambda t: self.operator - 1.j*lam*diags(self.projc), RHS),  t0=0, y0=self.x0, t_bound=self.T, first_step=self.dt)
+                raise Exception('nope')
+                '''
+                sol = ode_method(fun=ode_fn(lambda t: self.operator - 1.j*self.lam*self.projc.operator, lambda t: self.RHS),
+                        t0=0, y0=self.x0, t_bound=self.T, first_step=self.dt, max_step=self.dt)
+                '''
 
             n_steps = int(self.T*(1/self.dt))
-            t_array = np.zeros(n_steps)
+            # t_array = np.zeros(n_steps)
+            '''
             val_array = np.zeros((n_steps,self.N,self.N), dtype=complex)
             bndry_val_array = np.zeros((n_steps,self.N**2), dtype=complex)
+            '''
+            # here only store first and last
+            val_array = np.zeros((2,self.N,self.N), dtype=complex)
+            bndry_val_array = np.zeros((2,self.N**2), dtype=complex)
             val_array[0,:,:] = np.reshape(self.x0, (self.N,self.N))
+            bndry_val_array[0,self.bndry_points] =  self.x0[self.bndry_points]
 
             ''' wanna change this to the scipy.solve_ivp function '''
             for i in range(1, n_steps):
                 sol.step()
-                t_array[i] = sol.t
+                # t_array[i] = sol.t
                 # convert back from interaction picture
                 if ipic:
                     vals = self.projc.apply_exp_fn(self.lam)(-sol.t)@sol.y
                 elif not ipic:
-                    raise Exception('Should have thrown error earlier already.')
-                    # vals = ipic_rotation(self.projc, self.lam)(-sol.t)@sol.y
-                val_array[i,:,:] = np.reshape(vals, (self.N,self.N))
-                bndry_val_array[i, self.bndry_points] = vals[self.bndry_points]
-                if not i%100:
-                    print('at step', i)
+                    vals = sol.y
+                '''
+                val_array[i,:,:] = copy.deepcopy(np.reshape(vals, (self.N,self.N)))
+                bndry_val_array[i, self.bndry_points] = copy.deepcopy(vals[self.bndry_points])
+                '''
+                val_array[-1,:,:] = copy.deepcopy(np.reshape(vals, (self.N,self.N)))
+                bndry_val_array[-1, self.bndry_points] = copy.deepcopy(vals[self.bndry_points])
+                # if not i%1000:
+                #     print('at step', i)
 
-            # val_array += self.bcvals.reshape((self.N,self.N))
+            val_array += self.bcvals.reshape((self.N,self.N))
 
             print('Finished after ', n_steps, ' steps.')
 
@@ -222,7 +243,9 @@ class PenaltyDE_2d:
         if ipic:
             RHS = lambda t: self.projc.apply_exp_fn(self.lam)(t) @ ( self.RHS + self.L_at_bcvals )
             sol = ode_method(fun=ode_fn(ipic_operator(self.operator, self.projc, self.lam),
-                                        RHS), t0=0, y0=self.x0, t_bound=self.T, first_step=self.dt)
+                                        RHS), t0=0, y0=self.x0, t_bound=self.T,
+                                                first_step=self.dt,
+                                                max_step=self.dt)
         elif not ipic:
             raise Exception("This needs to be implemented.")
             RHS = self.RHS + self.L_at_bcvals
@@ -231,8 +254,18 @@ class PenaltyDE_2d:
 
         n_steps = int(self.T*(1/self.dt))
         t_array = np.zeros(n_steps)
+        '''
         val_array = np.zeros((n_steps,2,self.N,self.N), dtype=complex)
-        soln_bndry = np.zeros((n_steps,2*self.N**2), dtype=complex)
+        soln_bndry = np.zeros((n_steps,2,self.N**2), dtype=complex)
+        '''
+        val_array = np.zeros((2,2,self.N,self.N), dtype=complex)
+        soln_bndry = np.zeros((2,2,self.N**2), dtype=complex)
+        val_array[0,0,...] = np.reshape(self.x0[:self.N**2], (self.N,self.N))
+        val_array[0,1,...] = np.reshape(self.x0[self.N**2:], (self.N,self.N))
+        # we assume that at initial time compliant to bndry conditions so having zero
+        # there is fine.
+        # I know this deviates from what's implemented in the case above but effectively
+        # are just doing the same at the moment.
 
         for i in range(n_steps):
             sol.step()
@@ -243,11 +276,20 @@ class PenaltyDE_2d:
             elif not ipic:
                 raise Exception("This needs to be implemented.")
                 # vals = ipic_rotation(self.projc, self.lam)(sol.t)@sol.y
-            soln_bndry[i,self.bndry_points] = vals[self.bndry_points]
-            val_array[i,0,...] = np.reshape(vals[:self.N**2], (self.N,self.N))  # [v]
-            val_array[i,1,...] = np.reshape(vals[self.N**2:], (self.N,self.N))  # [w]
-            if not i%100:
-                print('at step', i)
+            bvals = np.zeros_like(vals)
+            bvals[self.bndry_points] = vals[self.bndry_points]
+            '''
+            val_array[ i,0,...] = np.reshape(vals[:self.N**2], (self.N,self.N))  # [v]
+            val_array[ i,1,...] = np.reshape(vals[self.N**2:], (self.N,self.N))  # [w]
+            soln_bndry[i,0,...] = np.reshape(bvals[:self.N**2], (self.N**2))  # [v]
+            soln_bndry[i,1,...] = np.reshape(bvals[self.N**2:], (self.N**2))  # [w]
+            '''
+            val_array[ -1,0,...] = np.reshape(vals[:self.N**2], (self.N,self.N))  # [v]
+            val_array[ -1,1,...] = np.reshape(vals[self.N**2:], (self.N,self.N))  # [w]
+            soln_bndry[-1,0,...] = np.reshape(bvals[:self.N**2], (self.N**2))  # [v]
+            soln_bndry[-1,1,...] = np.reshape(bvals[self.N**2:], (self.N**2))  # [w]
+            # if not i%100:
+            #     print('at step', i)
         print('Finished after ', n_steps, ' steps.')
 
         return val_array, soln_bndry
