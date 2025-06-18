@@ -14,7 +14,7 @@ plt.rcParams.update({
     "text.usetex": True,
     "font.family": "mathptmx",
     "text.latex.preamble": r"\usepackage{amsmath}",
-    "font.size": 14
+    "font.size": 20
 })
 
 ''' -------------------------------------------------- '''

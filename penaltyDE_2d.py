@@ -1,6 +1,8 @@
 from penalty_utils import *
 import copy
 
+from scipy.fftpack import dct, idct, dst, idst
+
 
 class PenaltyProj:
     def __init__(self, operator, kind):
