@@ -42,10 +42,6 @@ def circle_points(X, Y, center=(0.5, 0.5), radius=0.5, kind='outside'):
         condition = (X-center[0])**2 + (Y-center[1])**2 <= radius**2
     else:
         raise Exception("Provide either kind='outside' or kind='inside'.")
-    '''
-    condition = condition.flatten()
-    points = np.nonzero(condition)
-    '''
     return get_nonzero_points(condition)
 
 ''' -------------------------------------------------- '''
@@ -132,11 +128,6 @@ def circle_bdry_projection_2d(num_grid_points, X, Y):
 def slit_bdry_projection2d(num_grid_points, X, Y):
     N = num_grid_points
     # project onto boundary
-    '''
-    projector2d =  projOp(N*N, list(range(N//2*N+N//4,  N//2*N+N//3))+list(range((1+N//2)*N+N//3  ,(1+N//2)*N+N//3)) )
-    projector2d += projOp(N*N, list(range(N//2*N+3*N//8,N//2*N+N//2))+list(range((1+N//2)*N+3*N//8,(1+N//2)*N+N//2)) )
-    '''
-
     return projOp(N*N, slit_indices(X, Y))
 
 ''' -------------------------------------------------- '''
@@ -162,29 +153,9 @@ def wall_deriv_projection2d(num_grid_points, X, Y):
     swap += sparse.coo_matrix((np.ones_like(wall_lef), (wall_lef, wall_lef+1)), shape=(N*N,N*N))
     swap += sparse.coo_matrix((np.ones_like(wall_rig), (wall_rig, wall_rig-1)), shape=(N*N,N*N))
     swap += swap.T
-    # ''' identity part '''
-    # swap += sparse.coo_matrix((np.ones_like(wall_top), (wall_top, wall_top)), shape=(N*N,N*N))
-    # swap += sparse.coo_matrix((np.ones_like(wall_bot), (wall_bot, wall_bot)), shape=(N*N,N*N))
-    # swap += sparse.coo_matrix((np.ones_like(wall_lef), (wall_lef, wall_lef)), shape=(N*N,N*N))
-    # swap += sparse.coo_matrix((np.ones_like(wall_rig), (wall_rig, wall_rig)), shape=(N*N,N*N))
     proj = swap
 
     return proj
-# ''' -------------------------------------------------- '''
-# def ipic_rotation(projc, lam, kind='value'):
-#     def wrap_ipic_rot(t):
-#         ''' this will only work for Dirichlet as for Neumann
-#             the projection is no diagonal anymore
-#         '''
-#         return diags(np.exp(1.j*lam*t*projc.diagonal()),0)
-#     def wrap_ipic_rot_deriv(t):
-#         ''' more expensive but correct; should be possible to diagonalize this one easily though '''
-#         return sparse.linalg.expm(1.j*lam*t*projc)
-#
-#     if kind.lower() == 'value' or not kind.lower:
-#         return wrap_ipic_rot
-#     elif kind.lower() == 'deriv':
-#         return wrap_ipic_rot_deriv
 ''' -------------------------------------------------- '''
 def ipic_operator(operator, projc, lam):
     U = projc.apply_exp_fn(lam)  # this is a f(t)
@@ -226,7 +197,6 @@ def do_plot_evolution_wave(invals, dt):
     def update(frame):
         cax0.set_array(np.real(val_array[frame,0,:]))
         cax1.set_array(np.real(val_array[frame,1,:]))
-        # err = np.linalg.norm(np.real(bndry_vals[frame,:]) - g_fn.reshape(bndry_vals[frame,:].shape))
         fig.suptitle(f'time_step {frame*dt:.2f}')
         ax[0].set_title(r'$v$')
         ax[1].set_title(r'$w=\partial_t v$')

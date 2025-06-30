@@ -5,6 +5,9 @@ from scipy.fftpack import dct, idct, dst, idst
 
 
 class PenaltyProj:
+    '''
+        convenience class for projection operator to provide time evolution
+    '''
     def __init__(self, operator, kind):
         self.operator = operator
         self.kind = kind
@@ -17,12 +20,15 @@ class PenaltyProj:
         if self.kind.lower() == 'value':
             out_fn = lambda t: diags(np.exp(1.j*lam*t*self.operator.diagonal()),0)
         elif self.kind.lower() == 'deriv':
+            # I was lazy here but this could also be
+            # "classically fast-forwarded"
             out_fn = lambda t: sparse.linalg.expm(1.j*lam*t*self.operator)
         return out_fn
 """ ========================================== """
 class PenaltyDE_2d:
     '''
-        todo: docstring
+        convenience class to implement penalty projection approach
+        using interaction picture simulation for 2d discretized PDEs
     '''
     def __init__(self, N=int(2**5), dt=1e-2, T=1, lam=1e6, eqtype='heat', coeff=(1,1), bctype='wall', **kwargs):
         self.N = N
