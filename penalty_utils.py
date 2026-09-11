@@ -16,7 +16,6 @@ plt.rcParams.update({
     "text.latex.preamble": r"\usepackage{amsmath}",
     "font.size": 20
 })
-
 ''' -------------------------------------------------- '''
 
 def projOp(N, indices):
@@ -32,7 +31,6 @@ def projOp(N, indices):
 
 def get_nonzero_points(condition):
     return np.flatnonzero(condition.flatten())
-
 ''' -------------------------------------------------- '''
 
 def circle_points(X, Y, center=(0.5, 0.5), radius=0.5, kind='outside'):
@@ -45,7 +43,6 @@ def circle_points(X, Y, center=(0.5, 0.5), radius=0.5, kind='outside'):
     return get_nonzero_points(condition)
 
 ''' -------------------------------------------------- '''
-
 def wall_indices(X, Y, L=0., R=1., kind='lrtb'):
     conditions = np.zeros_like(X, dtype=bool)
     if 'l' in kind.lower():
@@ -58,9 +55,7 @@ def wall_indices(X, Y, L=0., R=1., kind='lrtb'):
         conditions += np.isclose(Y, R, atol=1/2*(Y[1,0]-Y[0,0]))
 
     return get_nonzero_points(conditions)
-
 ''' -------------------------------------------------- '''
-
 # A hardcoded slit geometry assuming we have a [0,1]^2 box
 def slit_indices(X, Y):
     condition =  (X > 0.25)*(X < 0.45)*(Y > 0.3)*(Y <  0.35)
@@ -69,7 +64,6 @@ def slit_indices(X, Y):
     return get_nonzero_points(condition)
 
 ''' -------------------------------------------------- '''
-
 def heat_operator2d(num_grid_points, dissipativity=(1.,1.), dx=1.):
     N = num_grid_points
     # laplacian (scale-free) with a transport term as well
@@ -78,9 +72,7 @@ def heat_operator2d(num_grid_points, dissipativity=(1.,1.), dx=1.):
     transport = (0,0)
     diff_op = dissipativity[0]*Diff(axis=0, grid=dx, periodic=True, acc=4)**2 + dissipativity[1]*Diff(axis=1, grid=dx, periodic=True, acc=4)**2 + transport[0]*Diff(axis=0, grid=dx, periodic=True, acc=4) + transport[1]*Diff(axis=1, grid=dx, periodic=True, acc=4)
     ''' let's make that unperiodic but unconstrained '''
-
     return diff_op.matrix((N,N))
-
 def wave_operator2d(num_grid_points, speed_of_sound=(1,1), dx=1):
     '''
     parameters: num_gridpoints
@@ -100,7 +92,6 @@ def wave_operator2d(num_grid_points, speed_of_sound=(1,1), dx=1):
     laplace = speed_of_sound[0]*Diff(axis=0, grid=dx, periodic=True, acc=4)**2 + speed_of_sound[1]*Diff(axis=1, grid=dx, periodic=True, acc=4)**2
     lapmat = laplace.matrix((N,N))
     Wave = sparse.block_array([[None, identity(N*N)], [lapmat, None]])
-
     return Wave
 
 ''' -------------------------------------------------- '''
@@ -116,7 +107,6 @@ def wall_bdry_projection2d(num_grid_points, X, Y, kind='lrtb'):
     return projector2d
     '''
     return projOp(N*N, wall_indices(X=X, Y=Y, kind=kind))
-
 ''' -------------------------------------------------- '''
 
 def circle_bdry_projection_2d(num_grid_points, X, Y):
@@ -131,37 +121,96 @@ def slit_bdry_projection2d(num_grid_points, X, Y):
     return projOp(N*N, slit_indices(X, Y))
 
 ''' -------------------------------------------------- '''
+def wall_neumann_pairs(num_grid_points, X, Y, kind='lrtb'):
+    '''
+    Return disjoint ``(boundary, inward-neighbour)`` pairs for a wall.
 
-def wall_deriv_projection2d(num_grid_points, X, Y):
-    def clean(wall):
-        wall = np.delete(wall, wall.argmax())
-        wall = np.delete(wall, wall.argmin())
-        return wall
-
+    A two-point zero-Neumann stencil requires both values in a pair to agree.
+    The pairs must be disjoint for their simultaneous swaps to be an
+    involution.  Corners are omitted because their inward normal is
+    ambiguous; when two side stencils would share an inward point, the pair
+    from the later side is omitted as required by Eqs. (105)--(106) of the
+    accompanying paper.
+    '''
     N = num_grid_points
-    indices = np.arange(0, N*N)
+    requested_sides = set(kind.lower())
+    invalid_sides = requested_sides.difference('lrtb')
+    if invalid_sides or not requested_sides:
+        raise ValueError("kind must be a non-empty subset of 'lrtb'")
+    if X.shape != (N, N) or Y.shape != (N, N):
+        raise ValueError('X and Y must both have shape (num_grid_points, num_grid_points)')
 
-    wall_top = clean(wall_indices(X, Y, L=0., R=1., kind='t'))
-    wall_bot = clean(wall_indices(X, Y, L=0., R=1., kind='b'))
-    # double-clean two of the sides to avoid doubly applying it in the corner points
-    wall_lef = clean(clean(wall_indices(X, Y, L=0., R=1., kind='l')))
-    wall_rig = clean(clean(wall_indices(X, Y, L=0., R=1., kind='r')))
+    corners = {0, N - 1, N * (N - 1), N * N - 1}
+    inward_offsets = {'t': N, 'b': -N, 'l': 1, 'r': -1}
+    used_points = set()
+    pairs = []
 
-    ''' swap part '''
-    swap =  sparse.coo_matrix((np.ones_like(wall_top), (wall_top, wall_top+N)), shape=(N*N,N*N))
-    swap += sparse.coo_matrix((np.ones_like(wall_bot), (wall_bot, wall_bot-N)), shape=(N*N,N*N))
-    swap += sparse.coo_matrix((np.ones_like(wall_lef), (wall_lef, wall_lef+1)), shape=(N*N,N*N))
-    swap += sparse.coo_matrix((np.ones_like(wall_rig), (wall_rig, wall_rig-1)), shape=(N*N,N*N))
-    swap += swap.T
-    proj = swap
+    # Top and bottom first reproduces the stencil layout used in the paper:
+    # side pairs adjacent to them are skipped when their inner points clash.
+    for side in 'tblr':
+        if side not in requested_sides:
+            continue
+        for boundary in wall_indices(X, Y, L=0., R=1., kind=side):
+            boundary = int(boundary)
+            neighbour = boundary + inward_offsets[side]
+            if boundary in corners:
+                continue
+            if boundary in used_points or neighbour in used_points:
+                continue
+            pairs.append((boundary, neighbour))
+            used_points.update((boundary, neighbour))
 
-    return proj
+    return np.asarray(pairs, dtype=int).reshape((-1, 2))
+
+
+def wall_deriv_projection2d(num_grid_points, X, Y, kind='lrtb'):
+    '''
+    Construct the orthogonal projector for a zero-Neumann wall condition.
+
+    If ``S`` simultaneously swaps every disjoint boundary/inner pair, the
+    infeasible (unequal-value) subspace is projected onto by
+    ``P_N = (I - S) / 2``.  Building the two-by-two projector blocks directly
+    leaves all unaffected grid points in the kernel and avoids materialising
+    the full swap.
+    '''
+    N = num_grid_points
+    pairs = wall_neumann_pairs(N, X, Y, kind=kind)
+    if not len(pairs):
+        return sparse.csc_matrix((N * N, N * N), dtype=float)
+
+    first, second = pairs.T
+    rows = np.concatenate((first, first, second, second))
+    cols = np.concatenate((first, second, first, second))
+    data = np.concatenate((
+        0.5 * np.ones(len(pairs)),
+        -0.5 * np.ones(len(pairs)),
+        -0.5 * np.ones(len(pairs)),
+        0.5 * np.ones(len(pairs)),
+    ))
+    return sparse.coo_matrix(
+        (data, (rows, cols)), shape=(N * N, N * N)
+    ).tocsc()
 ''' -------------------------------------------------- '''
 def ipic_operator(operator, projc, lam):
-    U = projc.apply_exp_fn(lam)  # this is a f(t)
+    '''Return the interaction-picture generator for a fixed projector.
+
+    The four time-independent sparse blocks are computed once.  Each call
+    then only applies scalar phases, rather than forming two matrix
+    exponentials and carrying out two sparse matrix products.
+    '''
+    operator = sparse.csc_matrix(operator, dtype=complex)
+    P = projc.operator
+    Q = projc.complement
+
+    QAQ = (Q @ operator @ Q).tocsc()
+    PAP = (P @ operator @ P).tocsc()
+    PAQ = (P @ operator @ Q).tocsc()
+    QAP = (Q @ operator @ P).tocsc()
+
     def wrap_ipic(t):
-        # rotation matrix
-        return U(t) @ operator @ U(-t)
+        phase = np.exp(1.j * lam * t)
+        inverse_phase = np.exp(-1.j * lam * t)
+        return QAQ + PAP + phase * PAQ + inverse_phase * QAP
     return wrap_ipic
 ''' -------------------------------------------------- '''
 def ode_fn(operator, RHS=lambda t : 0):
@@ -180,7 +229,6 @@ def do_plot_evolution(invals, dt):
         cax.set_array(np.real(val_array[frame,:]))
         ax.set_title(f'time_step {frame*dt:.2f}')
         return [cax]
-
     n_steps = val_array.shape[0] // 100
     anim = FuncAnimation(fig, update, frames=range(0,val_array.shape[0], n_steps), interval=0, blit=False)
     plt.show()
@@ -201,7 +249,6 @@ def do_plot_evolution_wave(invals, dt):
         ax[0].set_title(r'$v$')
         ax[1].set_title(r'$w=\partial_t v$')
         return [cax0,cax1]
-
     n_steps = val_array.shape[0]//100
     anim = FuncAnimation(fig, update, frames=range(0, val_array.shape[0], n_steps), interval=0, blit=False)
     plt.show()
